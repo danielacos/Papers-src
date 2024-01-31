@@ -1,5 +1,5 @@
 # Papers-src
-Open source code used for the simulations shown in the following published papers that I have co-authored:
+Open source code used for the simulations shown in the following published papers that we have co-authored:
 
 1. 
 2. 
