@@ -1,7 +1,8 @@
 # Papers-src
 Open source code used for the simulations shown in the following published papers that I have co-authored:
-1.
-2.
+
+1. 
+2. 
 3. Acosta-Soba, D., Guillén-González, F., & Rodríguez-Galván, J. R. (2023). An upwind DG scheme preserving the maximum principle for the convective Cahn-Hilliard model. Numerical Algorithms, 92(3), 1589-1619. DOI: [10.1007/s11075-022-01355-2](https://doi.org/10.1007/s11075-022-01355-2).
   * Link to source code:
 
