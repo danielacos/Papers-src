@@ -1,6 +1,7 @@
 #
 # Keller-Segel Test
 # ===================
+# FEniCS version: 2019.1.0
 #
 
 import dolfin as fe

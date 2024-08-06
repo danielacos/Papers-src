@@ -1,6 +1,7 @@
 #
 # Tumor Test
 # ===================
+# FEniCSx version: 0.6
 #
 
 import dolfinx

@@ -1,3 +1,5 @@
+# FEniCSx version: 0.6
+
 from mpi4py import MPI
 import dolfinx
 from ufl import FiniteElement, VectorElement, inner, dx, grad, sym

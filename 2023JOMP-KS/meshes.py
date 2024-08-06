@@ -1,3 +1,5 @@
+# FEniCS version: 2019.1.0
+
 from dolfin import *
 import matplotlib.pyplot as plt
 

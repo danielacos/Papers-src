@@ -18,6 +18,8 @@ in each time step.
 FEM semidiscrete space scheme and Eyre semidiscrete time scheme
 """
 
+# FEniCS version: 2019.1.0
+
 from dolfin import *
 import numpy as np
 import random

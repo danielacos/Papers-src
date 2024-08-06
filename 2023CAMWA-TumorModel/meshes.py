@@ -1,3 +1,5 @@
+# FEniCSx version: 0.6
+
 from dolfin import *
 
 circle = 0

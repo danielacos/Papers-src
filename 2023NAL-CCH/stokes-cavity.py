@@ -3,7 +3,9 @@
 # Laminar flow cavity test
 #
 
-import dolfin as fe  # Dolfin is the Python interface to FEniCS
+# FEniCS version: 2019.1.0
+
+import dolfin as fe
 import numpy as np
 import matplotlib.pyplot as plt
 
