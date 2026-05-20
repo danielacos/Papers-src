@@ -647,7 +647,7 @@ if(__name__ == "__main__"):
     pyvista.set_plot_theme("document")
 
     if plot_mesh: # Plot mesh
-        topology, cell_types, geometry = plot.create_vtk_mesh(CHD.mesh, CHD.mesh.topology.dim)
+        topology, cell_types, geometry = plot.vtk_mesh(CHD.mesh, CHD.mesh.topology.dim)
         grid = pyvista.UnstructuredGrid(topology, cell_types, geometry)
         plotter = pyvista.Plotter()
         plotter.add_mesh(grid, show_edges=True, color="white")
