@@ -7,6 +7,7 @@
 #
 
 import dolfinx
+from dolfinx import fem
 from dolfinx.fem import (
     Expression, Function, functionspace,
     assemble_scalar, form
@@ -17,9 +18,9 @@ from basix.ufl import element, mixed_element
 from ufl import(
      TestFunction, TrialFunction,
      SpatialCoordinate,
-     dx, dS, inner, grad, div,
+     dx, dS, ds, inner, grad, div,
      avg, jump,
-     tanh, sqrt, sign,
+     tanh, sqrt, sign, exp, cos,
      split,
      FacetArea, FacetNormal,
      Measure 
@@ -48,6 +49,7 @@ def printMPI(string, end='\n'):
 DOLFIN_EPS = 1e-16
 # dx_ML = dx(scheme="vertex", metadata={"degree":1, "representation":"quadrature"}) # mass lumped terms
 dx_ML = Measure("dx", metadata = {"quadrature_rule": "vertex"})
+# dx_ML = dx
 
 #
 # Problem class
@@ -74,7 +76,6 @@ class CHD_tumor_DG_UPW(object):
         CHD.Cu = float(params.Cu)
         CHD.Cn = float(params.Cn)
 
-        CHD.eta = float(params.eta)
         CHD.p_unique = float(params.p_unique)
 
         CHD.solver = params.solver
@@ -252,7 +253,6 @@ class CHD_tumor_DG_UPW(object):
         Cu = CHD.Cu
         Cn = CHD.Cn
 
-        eta = CHD.eta
         p_unique = CHD.p_unique
 
         v, p, u, p1c_u, mu_u, p0d_mu_u, n = CHD.v, CHD.p, CHD.u, CHD.p1c_u, CHD.mu_u, CHD.p0d_mu_u, CHD.n
@@ -307,7 +307,7 @@ class CHD_tumor_DG_UPW(object):
         #
         # Variational problem
         #
-        e_len = FacetArea(CHD.mesh)
+        CHD.e_len = e_len = FacetArea(CHD.mesh)
         n_e = FacetNormal(CHD.mesh)
         l = 20.0/nx
 
@@ -329,26 +329,14 @@ class CHD_tumor_DG_UPW(object):
             # Centered discretization
             return(
                 - inner(vb, n_e)('+') * avg(phi) * jump(p0d_mu) * dS 
-                - div(vb) * phi * p0d_mu * dx
+                + div(vb) * phi * p0d_mu * dx
             )
-
-        def sh(v, phi, p0d_mu, vb):
-            return(- 1/2 * inner(vb, n_e)('+') * sign(inner(v, n_e)('+')) * jump(phi) * jump(p0d_mu) * dS)
-        def shd(v, phi, p0d_mu, vb, eta = 1e-10):
-            return(- 1/2 * inner(vb, n_e)('+') * inner(v, n_e)('+')/(abs(inner(v, n_e)('+')) + eta) * jump(phi) * jump(p0d_mu) * dS)
         
         if K > DOLFIN_EPS:
             CHD.F_v = F_v = 1/K * inner(v, vb) * dx \
                     - inner(p, div(vb)) * dx \
                     + ch(u, p0d_mu_u, vb) \
                     + ch(n, mu_n(n, p0d_p1c_u0), vb)
-
-            if eta > DOLFIN_EPS:
-                CHD.F_v = F_v = F_v + shd(v, u, p0d_mu_u, vb, eta) \
-                        + shd(v, n, mu_n(n, p0d_p1c_u0), vb, eta)
-            elif not(eta < -DOLFIN_EPS):
-                CHD.F_v = F_v = F_v + sh(v, u, p0d_mu_u, vb) \
-                        + sh(v, n, mu_n(n, p0d_p1c_u0), vb)
             
             CHD.F_p = F_p = inner(div(v), pb) * dx
             
@@ -406,6 +394,7 @@ class CHD_tumor_DG_UPW(object):
             petsc_options = {
                 "snes_type": "newtonls",
                 "snes_linesearch_type": "none",
+                # "snes_linesearch_type": "l2",
                 "snes_atol": 1e-6,
                 "snes_rtol": 1e-6,
                 # "snes_monitor": None,
@@ -418,6 +407,7 @@ class CHD_tumor_DG_UPW(object):
             if CHD.p_unique < DOLFIN_EPS:
                 petsc_options["mat_mumps_icntl_24"] = 1  # Option for singular systems
                 petsc_options["mat_mumps_icntl_25"] = 0  # Option for singular systems
+
         if CHD.solver == "gmres":
             petsc_options = {
                 "snes_type": "newtonls",
@@ -426,7 +416,6 @@ class CHD_tumor_DG_UPW(object):
                 "snes_rtol": 1e-6,
                 "ksp_rtol": 1e-8,
                 "ksp_atol": 1e-8,
-                # "snes_monitor": None,
                 "snes_error_if_not_converged": True,
                 "ksp_error_if_not_converged": True,
                 "ksp_type": "gmres",
@@ -448,6 +437,7 @@ class CHD_tumor_DG_UPW(object):
         # Nullspace for pressure constraint
         #
         if CHD.solver=="gmres" and CHD.K > DOLFIN_EPS and CHD.p_unique < DOLFIN_EPS:
+            # null_vec.normalize()
             ns_vec = Function(CHD.Wh)
             ns_vec.x.array[:] = 0.0
             ns_vec.x.array[CHD.maps[1]] = 1.0
@@ -483,7 +473,7 @@ class CHD_tumor_DG_UPW(object):
                 v0, p0, u0, p1c_u0, mu_u0, p0d_mu0, n0 = CHD.solvector0.split()
 
                 # --- Yield initial data
-                yield {'step': step, 't': CHD.t, 'v':v0.collapse(), 'p':p0.collapse(), 'u':u0.collapse(), 'p1c_u':p1c_u0.collapse(), 'mu_u':mu_u0.collapse(), 'p0d_mu':p0d_mu0.collapse(), 'n':n0.collapse()}
+                yield {'step': step, 't': CHD.t, 'v':v0.collapse(), 'p':p0.collapse(), 'u':u0.collapse(), 'p1c_u':p1c_u0.collapse(), 'mu_u':mu_u0.collapse(), 'p0d_mu':p0d_mu0.collapse(), 'n':n0.collapse(), 'p0d_p1c_u0':CHD.p0d_p1c_u0, 'n_iter': 0}
 
             else:
                 CHD.t += CHD.dt
@@ -492,18 +482,8 @@ class CHD_tumor_DG_UPW(object):
 
                 # Newton
                 CHD.problem.solve()
-                # converged_reason = CHD.problem.solver.getConvergedReason()
-                # assert converged_reason > 0
-                # if converged_reason == -3: # Divergence, try direct solver
-                #     CHD.problem.solver.ksp.setType("preonly")
-                #     CHD.problem.solver.ksp.pc.setType("lu")
-                #     CHD.problem.solve()
-                #     CHD.problem.solver.ksp.setType(CHD.petsc_options["ksp_type"])
-                #     CHD.problem.solver.ksp.pc.setType(CHD.petsc_options["pc_type"])
-                # else:
-                #     assert converged_reason > 0
-                # num_iterations = CHD.problem.solver.getIterationNumber()
-                # print(f"Step {step}: {converged_reason=} {num_iterations=}")
+
+                n_iter = CHD.problem.solver.getIterationNumber()
 
                 CHD.solvector.x.scatter_forward()
 
@@ -517,12 +497,13 @@ class CHD_tumor_DG_UPW(object):
                 p.x.scatter_forward()
 
                 # --- Yield data computed in current iteration
-                yield {'step': step, 't': CHD.t, 'v':v.collapse(), 'p':p.collapse(), 'u':u.collapse(), 'p1c_u':p1c_u.collapse(), 'mu_u':mu_u.collapse(), 'p0d_mu':p0d_mu.collapse(), 'n':n.collapse(), 'v0':v0.collapse(), 'p0':p0.collapse(), 'u0':u0.collapse(), 'p1c_u0':p1c_u0.collapse(), 'mu_u0':mu_u0.collapse(), 'p0d_mu0':p0d_mu0.collapse(), 'n0':n0.collapse()}
+                p0d_p1c_u = CHD.project(p1c_u, CHD.P0ds)
+                yield {'step': step, 't': CHD.t, 'v':v.collapse(), 'p':p.collapse(), 'u':u.collapse(), 'p1c_u':p1c_u.collapse(), 'mu_u':mu_u.collapse(), 'p0d_mu':p0d_mu.collapse(), 'n':n.collapse(), 'p0d_p1c_u':p0d_p1c_u,'v0':v0.collapse(), 'p0':p0.collapse(), 'u0':u0.collapse(), 'p1c_u0':p1c_u0.collapse(), 'mu_u0':mu_u0.collapse(), 'p0d_mu0':p0d_mu0.collapse(), 'n0':n0.collapse(), 'p0d_p1c_u0':CHD.p0d_p1c_u0, 'n_iter': n_iter}
 
                 # --- Update solution
                 CHD.solvector0.x.array[:] = CHD.solvector.x.array
                 CHD.solvector0.x.scatter_forward()
-                CHD.p0d_p1c_u0.x.array[:] = CHD.project(p1c_u, CHD.P0ds).x.array
+                CHD.p0d_p1c_u0.x.array[:] = p0d_p1c_u.x.array
                 CHD.p0d_p1c_u0.x.scatter_forward()
 
             step = step + 1
@@ -530,20 +511,22 @@ class CHD_tumor_DG_UPW(object):
 
 # ---------------------------
 
-def print_info(i, t, u_data, p1c_u_data, n_data, u_n_mass_data, p_data, energy, dynamics=0):
-# energy, dynamics = 0):
+def print_info(i, t, u_data, p1c_u_data, n_data, u_n_mass_data, p_data, energy, tau_data, dynamics=0, n_iter=0):
     u_max, u_min = u_data
     p1c_u_max, p1c_u_min = p1c_u_data
     n_max, n_min = n_data
     u_n_mass, p1c_u_n_mass = u_n_mass_data
     p_max, p_min, p_mass = p_data
+    tau_u, tau_n = tau_data
     s = f"{i:3} {t:.6e} {u_max:.4e} {p1c_u_max:.4e} {n_max:.4e} {p_max:.4e}"
     s += f" {u_min:.4e} {p1c_u_min:.4e} {n_min:.4e} {p_min:.4e}"
     s += f" {u_n_mass:.4e} {p1c_u_n_mass:.4e} {p_mass:.4e}"
-    s += f" {energy:.4e}"
+    s += f" {energy:.4e} {tau_u:.4e} {tau_n:.4e}"
     if dynamics:
         dynamics_u, dynamics_p1c_u, dynamics_n = dynamics
         s += f" {dynamics_u:.4e} {dynamics_p1c_u:.4e} {dynamics_n:.4e}"
+    if n_iter:
+        s += f" {n_iter}"
     printMPI(s)
 
 
@@ -561,7 +544,6 @@ def define_parameters():
     parser.add_argument('--Cu', default=1.0)
     parser.add_argument('--Cn', default=1.0)
 
-    parser.add_argument('--eta', default=0)
     parser.add_argument('--p_unique', default=0)
 
     parser.add_argument('--solver', choices=['mumps', 'gmres'], default='mumps')
@@ -579,11 +561,10 @@ def define_parameters():
     parser.add_argument('--plot', default=10, help="Plot shown every number of time steps")
     parser.add_argument('--plot_mesh', default=0, help="Plot mesh")
     parser.add_argument('--vtk', default=0, help="vtk photogram saved to disk")
-    parser.add_argument('--vtkfile', default="CHD_DG-UPW", help="Name of vtk file")
+    parser.add_argument('--vtkfile', default="./CHD_DG-UPW", help="Name of vtk file")
     parser.add_argument('--save', default=1, help="Figures and output saved")
-    parser.add_argument('--savefile', default="CHD_DG-UPW", help="Name of output file")
-    parser.add_argument('--savefunc', default=0, help="Functions saved in HDF5 format")
-    parser.add_argument('--server', default=0, help="Set to 1 if the code is set to run on a server")
+    parser.add_argument('--savefile', default="./CHD_DG-UPW", help="Name of output file")
+    parser.add_argument('--savefunc', default=0, help="Functions saved in adios format")
 
     param = parser.parse_args()
 
@@ -620,7 +601,6 @@ if(__name__ == "__main__"):
     # Save output
     #
     do_save = int(params.save)
-    server = int(params.server)
     base_name_save = params.savefile
     savefunc = int(params.savefunc)
 
@@ -629,18 +609,13 @@ if(__name__ == "__main__"):
     #
     if savefunc:
         import adios4dolfinx as adx
-        adx.write_mesh(CHD.mesh, f"{base_name_save}_mesh")
-
-        with XDMFFile(comm, f"{base_name_save}.xdmf", "w") as xdmf:
-            xdmf.write_mesh(CHD.mesh)
+        adx.write_mesh(f"{base_name_save}_mesh.bp", CHD.mesh)
 
     #
     # Plot
     #
     if do_save:
         pyvista.OFF_SCREEN = True
-        if server:
-            pyvista.start_xvfb()
 
     do_plot = (int(params.plot) > 0)
     plot_mesh = (int(params.plot_mesh) > 0)
@@ -679,6 +654,16 @@ if(__name__ == "__main__"):
     printMPI("More info:")
     printMPI(f"h = {CHD.h_max}")
 
+    num_dofs_local = (CHD.Wh.dofmap.index_map.size_local) * CHD.Wh.dofmap.index_map_bs
+    num_dofs_global = CHD.Wh.dofmap.index_map.size_global * CHD.Wh.dofmap.index_map_bs
+    print(f"Number of dofs (owned) by rank {comm.rank}: {num_dofs_local}")
+    if comm.rank ==0:
+        printMPI(f"Number of dofs global: {num_dofs_global}")
+    printMPI(f"Number of dofs P1c: {CHD.P1cs.dofmap.index_map.size_global * CHD.P1cs.dofmap.index_map_bs}")
+    printMPI(f"Number of dofs P0d: {CHD.P0ds.dofmap.index_map.size_global * CHD.P0ds.dofmap.index_map_bs}")
+
+    printMPI(f"dt = {CHD.dt}")
+
     #
     # Save max, min and energy
     #
@@ -695,11 +680,12 @@ if(__name__ == "__main__"):
     dynam_n_list = []
     dynam_p1c_u_list = []
     dynamics = 0
+    n_iter = 0
 
     #
     # Print info
     #
-    printMPI("Time steps:\n  i t u_max p1c_u_max n_max p_max u_min p1c_u_min n_min p_min u_n_mass p1c_u_n_mass p_mass energy dynamics_u dynamics_p1c_u dynamics_n")
+    printMPI("Time steps:\n  i t u_max p1c_u_max n_max p_max u_min p1c_u_min n_min p_min u_n_mass p1c_u_n_mass p_mass energy tau_u tau_n dynamics_u dynamics_p1c_u dynamics_n n_iter")
 
     #
     # VTK output files
@@ -716,13 +702,13 @@ if(__name__ == "__main__"):
     
     for t_step in CHD_iterations:
 
-        i, t = t_step['step'], t_step['t']
+        i, t, n_iter = t_step['step'], t_step['t'], t_step['n_iter']
+        p0d_p1c_u0 = t_step['p0d_p1c_u0']
         v, p, u, p1c_u, mu_u, p0d_mu_u, n = t_step['v'], t_step['p'], t_step['u'], t_step['p1c_u'], t_step['mu_u'], t_step['p0d_mu'], t_step['n']
 
         #
         # Print info
         #
-
         u_max, u_min = comm.allreduce(max(u.x.array), op=MPI.MAX), comm.allreduce(min(u.x.array), op=MPI.MIN)
         p1c_u_max, p1c_u_min = comm.allreduce(max(p1c_u.x.array), op=MPI.MAX), comm.allreduce(min(p1c_u.x.array), op=MPI.MIN)
         n_max, n_min = comm.allreduce(max(n.x.array), op=MPI.MAX), comm.allreduce(min(n.x.array), op=MPI.MIN)
@@ -735,6 +721,11 @@ if(__name__ == "__main__"):
             - CHD.chi0 * p1c_u * n * dx \
             + 0.5 * 1/CHD.delta * pow(n, 2) * dx
         ))
+
+        n_e = FacetNormal(CHD.mesh)
+        tau_u = -1/2*assemble_scalar(form(abs(inner(v, n_e)('+'))*jump(u)*jump(p0d_mu_u)*dS))
+        tau_n = -1/2*assemble_scalar(form(abs(inner(v, n_e)('+'))*jump(n)*jump(CHD.mu_n(n, p0d_p1c_u0))*dS)) 
+
         if rank == 0:
             max_u_list.append(u_max)
             min_u_list.append(u_min)
@@ -755,8 +746,6 @@ if(__name__ == "__main__"):
             dynamics_p1c_u = comm.allreduce(max(np.abs(p1c_u.x.array - p1c_u0.x.array)), MPI.MAX) / comm.allreduce(max(np.abs(p1c_u0.x.array)), MPI.MAX)
             dynamics_n = comm.allreduce(max(np.abs(n.x.array - n0.x.array)), MPI.MAX) / comm.allreduce(max(np.abs(n0.x.array)), MPI.MAX)
 
-            # print(dynamics_phi)
-
             if rank == 0:
                 dynam_u_list.append(dynamics_u)
                 dynam_p1c_u_list.append(dynamics_p1c_u)
@@ -771,12 +760,15 @@ if(__name__ == "__main__"):
                 (u_n_mass, p1c_u_n_mass),
                 (p_max, p_min, p_mass),
                 energy,
-                dynamics)
+                (tau_u, tau_n),
+                dynamics,
+                n_iter)
                 
         #
         # Plot
         #
         if (do_plot and i % int(params.tsteps) % int(params.plot) == 0):
+            # pyvista.global_theme.window_size = [800, 650]
 
             # Properties of the scalar bar
             sargs_scalar = dict(height=0.6, vertical=True, position_x=0.8, position_y=0.2, title='', label_font_size=24, shadow=True,n_labels=5, fmt="%.2f", font_family="arial")
@@ -785,10 +777,17 @@ if(__name__ == "__main__"):
             # Create a grid to attach the DoF values
             topology, cell_types, geometry = plot.vtk_mesh(CHD.P1cs)
             grid = pyvista.UnstructuredGrid(topology, cell_types, geometry)
-            aux = p1c_u.x.array
-            aux[abs(aux) < 1e-16] = 0.0
-            aux[abs(aux - 1.0) < 1e-16] = 1.0
-            grid.point_data["Pi1_u"] = aux
+            aux1 = p1c_u.x.array.copy()
+            aux1[abs(aux1) < 1e-16] = 0.0
+            aux1[abs(aux1 - 1.0) < 1e-16] = 1.0
+            grid.point_data["Pi1_u"] = aux1
+            
+            aux2 = aux1.copy()
+            aux2[aux2 >= 0.9] = 0.0
+            aux2[aux2 > 0.1] = 1.0
+            aux2[aux2 <= 0.1] = 0.0
+            grid.point_data["interface"] = aux2
+            dofs_interface = int(np.sum(aux2))
             
             aux = CHD.project(n, CHD.P1cs, mass_lumping=True).x.array
             aux[abs(aux) < 1e-16] = 0.0
@@ -821,12 +820,12 @@ if(__name__ == "__main__"):
             # If environment variable PYVISTA_OFF_SCREEN is set to true save a png
             # otherwise create interactive plot
             if pyvista.OFF_SCREEN:
-                figure = plotter.screenshot(f"./{base_name_save}_Pi1_u_i-{i}.png", transparent_background=True)
+                figure = plotter.screenshot(f"{base_name_save}_Pi1_u_i-{i}.png", transparent_background=True)
                 plotter.close()
                 
                 comm.Barrier()
                 if rank == 0:
-                    img = Image.open(f"./{base_name_save}_Pi1_u_i-{i}.png")
+                    img = Image.open(f"{base_name_save}_Pi1_u_i-{i}.png")
                     width, height = img.size
                     # Setting the points for cropped image
                     left = width/6
@@ -834,7 +833,67 @@ if(__name__ == "__main__"):
                     right = 0.96 * width
                     bottom = 0.92 * height
                     im_cropped = img.crop((left, top, right, bottom)) # default window size is 1024x768
-                    im_cropped.save(f"./{base_name_save}_Pi1_u_i-{i}.png")
+                    im_cropped.save(f"{base_name_save}_Pi1_u_i-{i}.png")
+                    img.close()
+                comm.Barrier()
+            else:
+                plotter.show()
+                plotter.close()
+
+            # Plot interface
+            grid.set_active_scalars("interface")
+            if i == 0:
+                bounds = [-3.0, 3.0, -3.0, 3.0, -3.0, 3.0]
+                subgrid = grid.clip_box(bounds, crinkle=True, invert=False)
+                plotter = pyvista.Plotter()
+                plotter.add_mesh(subgrid, show_edges=True, cmap=mpl.colormaps["binary"], edge_color="white", show_scalar_bar=False)
+                plotter.view_xy()
+
+                # If environment variable PYVISTA_OFF_SCREEN is set to true save a png
+                # otherwise create interactive plot
+                if pyvista.OFF_SCREEN:
+                    figure = plotter.screenshot(f"{base_name_save}_interface_cut_dofs-{dofs_interface}_i-{i}.png", transparent_background=True)
+                    plotter.close()
+                    
+                    comm.Barrier()
+                    if rank == 0:
+                        img = Image.open(f"{base_name_save}_interface_cut_dofs-{dofs_interface}_i-{i}.png")
+                        width, height = img.size
+                        # Setting the points for cropped image
+                        left = width/5
+                        top = 0.08 * height
+                        right = 0.8 * width
+                        bottom = 0.92 * height
+                        im_cropped = img.crop((left, top, right, bottom)) # default window size is 1024x768
+                        im_cropped.save(f"{base_name_save}_interface_cut_dofs-{dofs_interface}_i-{i}.png")
+                        img.close()
+                    comm.Barrier()
+                else:
+                    plotter.show()
+                    plotter.close()
+
+            plotter = pyvista.Plotter()
+            plotter.add_mesh(grid, show_edges=True, cmap=mpl.colormaps["binary"], edge_color="white", show_scalar_bar=False)
+            plotter.camera.zoom(30)
+            plotter.view_xy()
+
+            # If environment variable PYVISTA_OFF_SCREEN is set to true save a png
+            # otherwise create interactive plot
+            if pyvista.OFF_SCREEN:
+                figure = plotter.screenshot(f"{base_name_save}_interface_dofs-{dofs_interface}_i-{i}.png", transparent_background=True)
+                plotter.close()
+                
+                comm.Barrier()
+                if rank == 0:
+                    img = Image.open(f"{base_name_save}_interface_dofs-{dofs_interface}_i-{i}.png")
+                    width, height = img.size
+                    # Setting the points for cropped image
+                    left = width/5
+                    top = 0.08 * height
+                    right = 0.8 * width
+                    bottom = 0.92 * height
+                    im_cropped = img.crop((left, top, right, bottom)) # default window size is 1024x768
+                    im_cropped.save(f"{base_name_save}_interface_dofs-{dofs_interface}_i-{i}.png")
                     img.close()
                 comm.Barrier()
             else:
@@ -852,12 +911,12 @@ if(__name__ == "__main__"):
             # If environment variable PYVISTA_OFF_SCREEN is set to true save a png
             # otherwise create interactive plot
             if pyvista.OFF_SCREEN:
-                figure = plotter.screenshot(f"./{base_name_save}_Pi1_n_i-{i}.png", transparent_background=True)
+                figure = plotter.screenshot(f"{base_name_save}_Pi1_n_i-{i}.png", transparent_background=True)
                 plotter.close()
                 
                 comm.Barrier()
                 if rank == 0:
-                    img = Image.open(f"./{base_name_save}_Pi1_n_i-{i}.png")
+                    img = Image.open(f"{base_name_save}_Pi1_n_i-{i}.png")
                     width, height = img.size
                     # Setting the points for cropped image
                     left = width/6
@@ -865,7 +924,7 @@ if(__name__ == "__main__"):
                     right = 0.96 * width
                     bottom = 0.92 * height
                     im_cropped = img.crop((left, top, right, bottom)) # default window size is 1024x768
-                    im_cropped.save(f"./{base_name_save}_Pi1_n_i-{i}.png")
+                    im_cropped.save(f"{base_name_save}_Pi1_n_i-{i}.png")
                     img.close()
                 comm.Barrier()
             else:
@@ -883,12 +942,12 @@ if(__name__ == "__main__"):
             # If environment variable PYVISTA_OFF_SCREEN is set to true save a png
             # otherwise create interactive plot
             if pyvista.OFF_SCREEN:
-                figure = plotter.screenshot(f"./{base_name_save}_p_i-{i}.png", transparent_background=True)
+                figure = plotter.screenshot(f"{base_name_save}_p_i-{i}.png", transparent_background=True)
                 plotter.close()
                 
                 comm.Barrier()
                 if rank == 0:
-                    img = Image.open(f"./{base_name_save}_p_i-{i}.png")
+                    img = Image.open(f"{base_name_save}_p_i-{i}.png")
                     width, height = img.size
                     # Setting the points for cropped image
                     left = width/6
@@ -896,7 +955,7 @@ if(__name__ == "__main__"):
                     right = 0.96 * width
                     bottom = 0.92 * height
                     im_cropped = img.crop((left, top, right, bottom)) # default window size is 1024x768
-                    im_cropped.save(f"./{base_name_save}_p_i-{i}.png")
+                    im_cropped.save(f"{base_name_save}_p_i-{i}.png")
                     img.close()
                 comm.Barrier()
             else:
@@ -907,23 +966,11 @@ if(__name__ == "__main__"):
         # Save functions to XDMF
         #
         if (savefunc and i % int(params.tsteps) % savefunc == 0):
-            adx.write_function(u, f"{base_name_save}_u_i-{i}")
-            adx.write_function(p1c_u, f"{base_name_save}_Pi1__u_i-{i}")
-            adx.write_function(n, f"{base_name_save}_Pi1_n_i-{i}")
-            adx.write_function(v, f"{base_name_save}_v_i-{i}")
-            adx.write_function(p, f"{base_name_save}_p_i-{i}")
-
-            with dolfinx.io.XDMFFile(comm, f"{base_name_save}.xdmf", "a") as xdmf:
-                u.name = "u"
-                p1c_u.name = "p1c_u"
-                n.name = "n"
-                v.name = "v"
-                p.name = "p"
-                xdmf.write_function(u, t=t)
-                xdmf.write_function(p1c_u, t=t)
-                xdmf.write_function(n, t=t)
-                xdmf.write_function(v, t=t)
-                xdmf.write_function(p, t=t)
+            adx.write_function(f"{base_name_save}_u.bp", u, time=t)
+            adx.write_function(f"{base_name_save}_p1c_u.bp", p1c_u, time=t)
+            adx.write_function(f"{base_name_save}_n.bp", n, time=t)
+            adx.write_function(f"{base_name_save}_v.bp", v, time=t)
+            adx.write_function(f"{base_name_save}_p.bp", p, time=t)
 
         #
         # Save to VTK
